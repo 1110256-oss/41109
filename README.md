@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 棒球模擬遊戲</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Three.js 庫 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d0d0d;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .scoreboard {
+            background-color: #333;
+            color: #e0e0e0;
+            border: 4px solid #f97316; /* 橘色邊框 */
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+        }
+        #canvas-container {
+            width: 100%;
+            height: 200px; /* 固定高度以顯示 3D 場景 */
+            background-color: #1a1a1a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* 2D Bases Overlay for Runner status */
+        .base-diamond-2d {
+            width: 100px;
+            height: 100px;
+            position: relative;
+            transform: rotate(45deg);
+            margin: 0 auto;
+            background-color: transparent;
+        }
+        .base {
+            position: absolute;
+            width: 15px;
+            height: 15px;
+            background-color: #fef3c7;
+            border: 2px solid #57534e;
+            transform: rotate(-45deg);
+            border-radius: 4px;
+        }
+        .base.first { top: 50%; right: -7px; transform: rotate(-45deg) translateY(-50%); }
+        .base.second { top: -7px; left: 50%; transform: rotate(-45deg) translateX(-50%); }
+        .base.third { bottom: 50%; left: -7px; transform: rotate(-45deg) translateY(50%); }
+        .runner {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f87171; /* Red runner */
+            border-radius: 50%;
+            z-index: 10;
+        }
+        .runner.r1 { top: 60%; right: 15%; }
+        .runner.r2 { top: 15%; left: 35%; }
+        .runner.r3 { bottom: 60%; left: 15%; }
+    </style>
+</head>
+<body>
+
+<div id="game-container" class="w-full max-w-lg mx-auto p-4 md:p-6 rounded-xl scoreboard">
+
+    <!-- Title and Scoreboard Header -->
+    <h1 class="text-3xl font-bold text-center text-yellow-400 mb-4 border-b-2 border-yellow-400 pb-2">3D 棒球模擬戰</h1>
+
+    <div class="flex justify-between items-center mb-4 p-3 bg-gray-700 rounded-lg">
+        <div class="text-lg font-mono">
+            <span id="inning-display" class="font-bold text-xl text-white">第 1 局 上</span>
+        </div>
+        <div class="flex space-x-4 text-xl font-bold">
+            <div class="flex flex-col items-center">
+                <span class="text-red-400 text-sm">客隊 (AI)</span>
+                <span id="score-away" class="text-white text-3xl">0</span>
+            </div>
+            <div class="flex flex-col items-center">
+                <span class="text-blue-400 text-sm">主隊 (您)</span>
+                <span id="score-home" class="text-white text-3xl">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bases, Balls, Strikes, Outs (BSO) & 3D Canvas -->
+    <div class="grid grid-cols-2 gap-4 mb-6">
+        <!-- BSO Display -->
+        <div class="bg-gray-800 p-4 rounded-lg shadow-inner">
+            <div class="text-center font-bold text-lg mb-2 text-orange-400">好壞出局數 (BSO)</div>
+            <div class="flex justify-around text-center">
+                <div>
+                    <span class="block text-2xl font-mono" id="balls-display">0</span>
+                    <span class="text-sm text-green-400">壞球 (B)</span>
+                </div>
+                <div>
+                    <span class="block text-2xl font-mono" id="strikes-display">0</span>
+                    <span class="text-sm text-red-400">好球 (S)</span>
+                </div>
+                <div>
+                    <span class="block text-2xl font-mono" id="outs-display">0</span>
+                    <span class="text-sm text-yellow-400">出局 (O)</span>
+                </div>
+            </div>
+            <!-- 2D Base Diamond Overlay for Runners -->
+            <div class="flex justify-center items-center mt-3">
+                <div class="base-diamond-2d">
+                    <div class="base home hidden"></div> <!-- Home plate is always occupied by the batter (not shown as runner) -->
+                    <div class="base first"></div>
+                    <div class="base second"></div>
+                    <div class="base third"></div>
+                    <!-- Runners (Hidden by default, shown via JS) -->
+                    <div id="runner1" class="runner r1 hidden"></div>
+                    <div id="runner2" class="runner r2 hidden"></div>
+                    <div id="runner3" class="runner r3 hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3D Canvas Container -->
+        <div class="flex justify-center items-center bg-gray-800 p-2 rounded-lg shadow-inner">
+            <div id="canvas-container">
+                <!-- Three.js canvas will be appended here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Message Area -->
+    <div id="message-box" class="text-center p-3 mb-6 min-h-12 rounded-lg text-lg font-bold bg-yellow-900 text-yellow-200 border border-yellow-500">
+        點擊「開始遊戲」開始一場九局的比賽！
+    </div>
+
+    <!-- Control Buttons -->
+    <div id="controls" class="flex flex-col space-y-3">
+        <button id="start-game-btn" class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition duration-200 shadow-md">
+            開始遊戲
+        </button>
+        <div id="game-buttons" class="hidden grid grid-cols-2 gap-3">
+            <button id="swing-btn" class="py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition duration-200 shadow-md transform hover:scale-105" disabled>
+                揮棒 (Swing)
+            </button>
+            <button id="take-btn" class="py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-200 shadow-md transform hover:scale-105" disabled>
+                不揮 (Take)
+            </button>
+        </div>
+        <!-- next-pitch-btn is no longer needed as the pitch animation handles the flow -->
+    </div>
+
+    <!-- Final Score Modal (Hidden initially) -->
+    <div id="final-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-gray-800 p-8 rounded-xl max-w-md w-full text-center border-4 border-yellow-400 shadow-2xl">
+            <h2 id="final-result-title" class="text-4xl font-extrabold mb-4 text-yellow-300">遊戲結束</h2>
+            <p id="final-score-text" class="text-xl text-white mb-6"></p>
+            <button onclick="window.location.reload()" class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition duration-200">
+                再玩一次
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Game State Variables ---
+    let inning = 1;
+    let isTopInning = true; // true for Top (客隊攻), false for Bottom (主隊攻)
+    let outs = 0;
+    let balls = 0;
+    let strikes = 0;
+    let scoreHome = 0; // User Score
+    let scoreAway = 0; // AI Score
+    let bases = [false, false, false]; // [1st, 2nd, 3rd]
+    let isPitching = false;
+    let pitchStartTime = 0;
+    let pitchDuration = 1.0; // Seconds for the ball to travel
+
+    // --- DOM Elements ---
+    const startButton = document.getElementById('start-game-btn');
+    const gameButtons = document.getElementById('game-buttons');
+    const swingButton = document.getElementById('swing-btn');
+    const takeButton = document.getElementById('take-btn');
+    const messageBox = document.getElementById('message-box');
+    const finalModal = document.getElementById('final-modal');
+    const finalResultTitle = document.getElementById('final-result-title');
+    const finalScoreText = document.getElementById('final-score-text');
+    const canvasContainer = document.getElementById('canvas-container');
+
+    const elements = {
+        inning: document.getElementById('inning-display'),
+        scoreHome: document.getElementById('score-home'),
+        scoreAway: document.getElementById('score-away'),
+        balls: document.getElementById('balls-display'),
+        strikes: document.getElementById('strikes-display'),
+        outs: document.getElementById('outs-display'),
+        runner1: document.getElementById('runner1'),
+        runner2: document.getElementById('runner2'),
+        runner3: document.getElementById('runner3')
+    };
+
+    // --- THREE.js Variables ---
+    let scene, camera, renderer;
+    let ball, pitcherMound, batterGroup, bat;
+    let pitchQuality = 0.5; // Stored here for 3D visualization logic
+    let isSwinging = false; // State for swing animation
+    let swingStartTime = 0;
+    const swingDuration = 0.2; // 200ms for a fast swing
+
+    let isHitFlight = false; // New state for post-hit ball flight
+    let hitStartTime = 0;
+    let hitDuration = 2.0; // Seconds for the hit ball to travel
+    let hitTarget = new THREE.Vector3();
+    let hitApexY = 0;
+
+    /**
+     * Initializes the 3D scene.
+     */
+    function init3D() {
+        // Scene setup
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222); // Dark background
+
+        // Camera (View from behind the batter)
+        const aspect = canvasContainer.offsetWidth / canvasContainer.offsetHeight;
+        camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+        camera.position.set(0, 2, 5); // x, y, z (z=5 is near home plate)
+        camera.lookAt(0, 1, -10); // Look towards the pitcher
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(canvasContainer.offsetWidth, canvasContainer.offsetHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        canvasContainer.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 10, 7.5);
+        scene.add(directionalLight);
+
+        // Field (Green Plane)
+        const fieldGeometry = new THREE.PlaneGeometry(30, 60);
+        const fieldMaterial = new THREE.MeshLambertMaterial({ color: 0x22c55e }); // Tailwind green-500
+        const field = new THREE.Mesh(fieldGeometry, fieldMaterial);
+        field.rotation.x = -Math.PI / 2; // Rotate to be flat
+        field.position.y = -0.05;
+        scene.add(field);
+
+        // Pitcher's Mound (Simple sphere)
+        const moundGeometry = new THREE.SphereGeometry(1, 32, 32);
+        const moundMaterial = new THREE.MeshLambertMaterial({ color: 0x964b00 }); // Brown
+        pitcherMound = new THREE.Mesh(moundGeometry, moundMaterial);
+        pitcherMound.position.set(0, 0.5, -18); // Fictional pitcher position
+        scene.add(pitcherMound);
+
+        // Home Plate (Simple Box)
+        const homePlateGeometry = new THREE.BoxGeometry(1.5, 0.1, 1.5);
+        const homePlateMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+        const homePlate = new THREE.Mesh(homePlateGeometry, homePlateMaterial);
+        homePlate.position.set(0, 0, 4); // Slightly in front of the camera
+        scene.add(homePlate);
+
+        // --- 3D Bases ---
+        const baseGeometry = new THREE.BoxGeometry(0.5, 0.1, 0.5);
+        const baseMaterial = new THREE.MeshLambertMaterial({ color: 0xfef3c7 }); // Creamy white
+
+        // Base 1 (Z is deep, X is right/left)
+        const base1 = new THREE.Mesh(baseGeometry, baseMaterial);
+        base1.position.set(4, 0, 0); // Fictional position for visual effect
+        scene.add(base1);
+
+        // Base 2
+        const base2 = new THREE.Mesh(baseGeometry, baseMaterial);
+        base2.position.set(0, 0, -4);
+        scene.add(base2);
+
+        // Base 3
+        const base3 = new THREE.Mesh(baseGeometry, baseMaterial);
+        base3.position.set(-4, 0, 0);
+        scene.add(base3);
+        
+        // --- Batter Setup (Group, Body, and Bat) ---
+        batterGroup = new THREE.Group();
+        batterGroup.position.set(-1.5, 0.0, 4); // Left side of home plate (Right-handed batter position)
+        scene.add(batterGroup);
+
+        // Body (Simple Cylinder)
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 32);
+        const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x4a4a4a }); // Dark Uniform
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.y = 0.75; // Above the ground
+        batterGroup.add(body);
+
+        // Head (Simple Sphere)
+        const headGeometry = new THREE.SphereGeometry(0.25, 32, 32);
+        const headMaterial = new THREE.MeshLambertMaterial({ color: 0xf5deb3 }); // Skin color
+        const head = new THREE.Mesh(headGeometry, headMaterial);
+        head.position.y = 1.7;
+        batterGroup.add(head);
+
+        // Pivot Point for the bat (simulates hands/shoulder pivot)
+        const batPivot = new THREE.Group();
+        batPivot.position.set(-0.3, 1.0, 0.0); // Pivot near the body
+        batterGroup.add(batPivot);
+
+        // Bat (Simple thin cylinder)
+        const batGeometry = new THREE.CylinderGeometry(0.05, 0.08, 1.2, 32);
+        const batMaterial = new THREE.MeshLambertMaterial({ color: 0x8b4513 }); // Brown Wood
+        bat = new THREE.Mesh(batGeometry, batMaterial);
+
+        // Position the bat relative to the pivot (held back, ready to swing)
+        bat.position.set(0, 0.0, 0.6); // 0.6 is half the length, so the pivot is at one end
+        bat.rotation.x = Math.PI / 2; // Rotate it to be horizontal for the swing rotation
+        batPivot.add(bat);
+
+        // Initial Bat Position (Ready Stance)
+        batPivot.rotation.y = -Math.PI / 4; // Tilted back 45 degrees
+        batPivot.rotation.z = 0.1; // Slight downward tilt
+
+        // Store the initial rotation and pivot for animation control
+        bat.userData.initialRotationY = -Math.PI / 4;
+        bat.userData.swingPivot = batPivot;
+
+        // --- Baseball Setup ---
+        const ballGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const ballMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff }); // White Baseball
+        ball = new THREE.Mesh(ballGeometry, ballMaterial);
+        ball.visible = false; // Hide until pitching starts
+        scene.add(ball);
+
+        // Handle window resize
+        window.addEventListener('resize', onWindowResize, false);
+    }
+
+    /**
+     * Handles window resize for responsiveness.
+     */
+    function onWindowResize() {
+        const width = canvasContainer.offsetWidth;
+        const height = canvasContainer.offsetHeight;
+
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height);
+    }
+
+    /**
+     * Main animation loop for 3D rendering.
+     */
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // 1. Pitch Animation (Ball flying towards the batter)
+        if (isPitching && ball.visible) {
+            const elapsedTime = (Date.now() - pitchStartTime) / 1000;
+            const progress = Math.min(1, elapsedTime / pitchDuration);
+
+            // Interpolate Z position from pitcher to home plate
+            const startZ = pitcherMound.position.z;
+            const endZ = bat.userData.swingPivot.position.z + batterGroup.position.z;
+            ball.position.z = startZ + (endZ - startZ) * progress;
+
+            // Simple curve for Y position (pitch height)
+            const curveFactor = Math.sin(progress * Math.PI);
+            ball.position.y = 1 + (curveFactor * 0.5);
+
+            // Simulate pitch quality deviation
+            const deviationX = (pitchQuality - 0.5) * 5;
+            ball.position.x = deviationX * (1 - progress);
+
+            // Check if the pitch is complete
+            if (progress >= 1) {
+                isPitching = false;
+                // If the player took too long (i.e., didn't click), we treat it as a "Take"
+                if (!actionTaken) {
+                    calculateResult(false);
+                }
+            }
+        }
+        
+        // 2. Hit Flight Animation (Ball flying out into the field)
+        if (isHitFlight && ball.visible) {
+            const elapsedTime = (Date.now() - hitStartTime) / 1000;
+            const progress = Math.min(1, elapsedTime / hitDuration);
+
+            // Parabolic motion (interpolation between start and end Z/X, with Y curve)
+            const startPos = new THREE.Vector3(ball.position.x, ball.position.y, ball.position.z);
+            const currentPos = startPos.lerp(hitTarget, progress);
+            
+            // Add vertical height (parabola)
+            const curveFactor = Math.sin(progress * Math.PI);
+            currentPos.y = (1 + hitApexY * curveFactor);
+            
+            ball.position.copy(currentPos);
+            
+            if (progress >= 1) {
+                isHitFlight = false;
+                ball.visible = false;
+                
+                // Continue game flow after animation finishes
+                if (outs < 3) {
+                    setTimeout(startNewAtBat, 1000); // Shorter delay after animation
+                } else {
+                    handleInningEnd();
+                }
+            }
+        }
+
+
+        // 3. Swing Animation
+        if (isSwinging) {
+            const elapsedTime = (Date.now() - swingStartTime) / 1000;
+            const progress = Math.min(1, elapsedTime / swingDuration);
+
+            // Swing from -45 degrees (ready) to +60 degrees (follow through)
+            const startAngle = bat.userData.initialRotationY;
+            const endAngle = Math.PI / 3; // 60 degrees in front
+            const currentAngle = startAngle + (endAngle - startAngle) * progress;
+
+            const batPivot = bat.userData.swingPivot;
+            if (batPivot) {
+                batPivot.rotation.y = currentAngle;
+            }
+
+            if (progress >= 1) {
+                isSwinging = false;
+                // Reset bat position after a short delay
+                setTimeout(() => {
+                    if (batPivot) {
+                       batPivot.rotation.y = bat.userData.initialRotationY;
+                    }
+                }, 500);
+            }
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    // --- Game Logic Functions (Adapted for 3D) ---
+    let actionTaken = false;
+
+    /**
+     * Updates all UI elements based on the current game state.
+     */
+    function updateUI() {
+        // Scoreboard
+        elements.inning.textContent = `第 ${inning} 局 ${isTopInning ? '上' : '下'}`;
+        elements.scoreHome.textContent = scoreHome;
+        elements.scoreAway.textContent = scoreAway;
+
+        // BSO
+        elements.balls.textContent = balls;
+        elements.strikes.textContent = strikes;
+        elements.outs.textContent = outs;
+
+        // Bases (2D Overlay)
+        elements.runner1.classList.toggle('hidden', !bases[0]);
+        elements.runner2.classList.toggle('hidden', !bases[1]);
+        elements.runner3.classList.toggle('hidden', !bases[2]);
+    }
+
+    /**
+     * Displays a message in the message box.
+     */
+    function showMessage(msg, style = 'bg-yellow-900 text-yellow-200 border-yellow-500') {
+        messageBox.className = `text-center p-3 mb-6 min-h-12 rounded-lg text-lg font-bold border ${style}`;
+        messageBox.textContent = msg;
+    }
+
+    /**
+     * Resets Balls, Strikes, and Bases for a new batter.
+     */
+    function resetAtBat() {
+        balls = 0;
+        strikes = 0;
+        showMessage('打者就位。請決定揮棒或不揮。', 'bg-yellow-900 text-yellow-200 border-yellow-500');
+    }
+
+    /**
+     * Clears all runners from bases.
+     */
+    function clearBases() {
+        bases = [false, false, false];
+    }
+
+    /**
+     * Advances runners and adds runs scored.
+     */
+    function advanceRunners(hits) {
+        let runsScored = 0;
+        const newBases = [false, false, false];
+
+        // 1. Check existing runners and move them
+        for (let i = 0; i < 3; i++) {
+            if (bases[i]) {
+                const newPosition = i + hits + 1;
+                if (newPosition >= 4) {
+                    runsScored++;
+                } else {
+                    newBases[newPosition - 1] = true;
+                }
+            }
+        }
+
+        // 2. Add the batter
+        if (hits === 4) {
+            runsScored++;
+        } else {
+            newBases[hits - 1] = true;
+        }
+
+        bases = newBases;
+
+        // 3. Update score
+        if (runsScored > 0) {
+            if (isTopInning) {
+                scoreAway += runsScored;
+            } else {
+                scoreHome += runsScored;
+            }
+            showMessage(`${hits === 4 ? '全壘打！' : '安打！'} 跑者推進並得到 ${runsScored} 分！`, 'bg-red-900 text-red-200 border-red-500');
+        } else if (hits > 0) {
+             showMessage(`${['一壘安打', '二壘安打', '三壘安打', '全壘打'][hits - 1]}！跑者上壘。`, 'bg-green-900 text-green-200 border-green-500');
+        }
+
+        // 4. Check for game end condition (walk-off)
+        if (!isTopInning && inning >= 9 && scoreHome > scoreAway) {
+            endGame();
+        }
+    }
+
+    /**
+     * Starts the hit ball flight animation based on hit type.
+     * @param {number} hits - 1 for Single, 2 for Double, 4 for Home Run.
+     */
+    function startHitFlight(hits) {
+        // Set the ball's starting position (near home plate)
+        ball.position.set(0, 1, 3);
+        ball.visible = true;
+
+        // Define target and apex based on hit type
+        if (hits === 4) { // Home Run
+            hitTarget.set(0, 1, -50); // Deep center field
+            hitApexY = 10;
+            hitDuration = 3.0; // Longer flight time
+        } else if (hits === 2) { // Double
+            hitTarget.set(-2, 0.5, -30); // Towards left-center field
+            hitApexY = 4;
+            hitDuration = 2.0;
+        } else { // Single/Walk (Treat walk as a simple line drive, single as a low liner)
+            hitTarget.set(0, 0.5, -10); // Short distance
+            hitApexY = 1;
+            hitDuration = 1.5;
+        }
+
+        hitStartTime = Date.now();
+        isHitFlight = true;
+        isPitching = false; // Ensure pitch animation is stopped
+    }
+
+    /**
+     * Determines the result of a pitch and updates BSO/Bases/Score.
+     * @param {boolean} swung - true if the user clicked Swing, false if Take.
+     */
+    function calculateResult(swung) {
+        actionTaken = true;
+
+        // Trigger 3D swing animation if the user swung
+        if (swung) {
+            isSwinging = true;
+            swingStartTime = Date.now();
+        }
+
+        // Disable buttons after action
+        swingButton.disabled = true;
+        takeButton.disabled = true;
+        isPitching = false;
+        ball.visible = false; // Hide pitching ball immediately after contact/miss
+
+        let result = '';
+        let hitMade = false;
+        let hitType = 0; // 1, 2, 3, or 4 for hit type, 0 for out/strike/ball
+
+        if (swung) {
+            // User swung
+            const timing = Math.random(); // 0.0 (early/late) to 1.0 (perfect timing)
+
+            if (timing > 0.85 && pitchQuality > 0.4) {
+                // Excellent Timing & Decent Pitch = HIT (Base hit or HR)
+                const hitRand = Math.random();
+                if (hitRand < 0.05) {
+                    hitType = 4; // HR (5%)
+                    result = '全壘打！';
+                } else if (hitRand < 0.25) {
+                    hitType = 2; // Double (20%)
+                    result = '二壘安打！';
+                } else {
+                    hitType = 1; // Single (75%)
+                    result = '一壘安打！';
+                }
+                hitMade = true;
+            } else if (timing > 0.70 && pitchQuality > 0.3) {
+                 // Good Contact = Single or Foul
+                const contact = Math.random();
+                if (contact < 0.6) {
+                    hitType = 1; // Single (60%)
+                    result = '一壘安打！';
+                    hitMade = true;
+                } else {
+                    result = '界外球！';
+                    if (strikes < 2) strikes++; // Foul counts as strike, unless already 2
+                }
+            } else {
+                // Missed or Poor Contact = Strike or Out
+                if (strikes < 2) {
+                    strikes++;
+                    result = '揮棒落空！';
+                } else {
+                    outs++;
+                    result = '三振出局！';
+                }
+            }
+        } else {
+            // User took the pitch (didn't swing)
+            if (pitchQuality > 0.5) {
+                // Pitch was a strike (closer to the center of the plate, quality > 0.5)
+                if (strikes < 2) {
+                    strikes++;
+                    result = '好球！';
+                } else {
+                    outs++;
+                    result = '三振出局！';
+                }
+            } else {
+                // Pitch was a ball (outside the zone, quality < 0.5)
+                if (balls < 3) {
+                    balls++;
+                    result = '壞球！';
+                } else {
+                    hitType = 1; // Walk (Treat as 1 base advancement)
+                    result = '四壞球保送！';
+                    hitMade = true;
+                }
+            }
+        }
+
+        updateUI();
+
+        // Handle post-action flow
+        if (hitMade) {
+            advanceRunners(hitType);
+            resetAtBat();
+            
+            // Start the 3D hit animation if it was a physical hit (not a walk)
+            if (hitType > 0 && hitType !== 3) { // 3rd base hit is not implemented
+                startHitFlight(hitType);
+                // Game flow continues after the animation ends in the animate() loop
+            } else {
+                // For walks or hits where animation is skipped, proceed directly
+                 setTimeout(startNewAtBat, 1500);
+            }
+        } else if (result.includes('出局')) {
+            showMessage(result, 'bg-red-800 text-white border-red-500');
+            handleOut(); // This will call handleInningEnd or resetAtBat
+        } else {
+            // Continuation of the at-bat (Ball, Strike, Foul)
+            showMessage(result, result.includes('壞球') ? 'bg-blue-900 text-blue-200 border-blue-500' : 'bg-red-900 text-red-200 border-red-500');
+            setTimeout(startNewPitch, 1500); // Wait 1.5s before next pitch
+        }
+    }
+
+
+    /**
+     * Starts the pitch process by initializing the 3D animation.
+     */
+    function startNewPitch() {
+        if (inning > 9 && scoreHome !== scoreAway) {
+            // Game already ended or is in extra innings setup
+            return;
+        }
+
+        actionTaken = false;
+        // Determine pitch quality before animation starts
+        pitchQuality = Math.random(); // 0.0 (perfect ball) to 1.0 (perfect strike)
+
+        // Reset ball position and make it visible
+        ball.position.copy(pitcherMound.position);
+        ball.visible = true;
+
+        pitchStartTime = Date.now();
+        isPitching = true;
+        isHitFlight = false; // Ensure hit flight is off
+
+        // Re-enable buttons and prompt user
+        swingButton.disabled = false;
+        takeButton.disabled = false;
+        showMessage('投手投球了！快速決定：揮棒或不揮！', 'bg-yellow-900 text-yellow-200 border-yellow-500');
+    }
+
+
+    /**
+     * Starts a new at-bat for the current side. (Same as original flow, but calls startNewPitch)
+     */
+    function startNewAtBat() {
+        resetAtBat();
+        updateUI();
+        startNewPitch();
+    }
+
+    /**
+     * Handles an out being recorded.
+     */
+    function handleOut() {
+        if (outs >= 3) {
+            handleInningEnd();
+        } else {
+            resetAtBat();
+            setTimeout(startNewPitch, 1000); // Start next pitch after an out
+        }
+    }
+
+    /**
+     * Handles the end of the half-inning (3 outs).
+     */
+    function handleInningEnd() {
+        outs = 0;
+        balls = 0;
+        strikes = 0;
+        clearBases();
+        isPitching = false; // Stop any ongoing pitch animation
+
+        // Reset bat rotation after the inning ends just in case
+        const batPivot = bat.userData.swingPivot;
+        if (batPivot) {
+            batPivot.rotation.y = bat.userData.initialRotationY;
+        }
+
+
+        if (isTopInning) {
+            isTopInning = false;
+            // AI completes its turn, now user is up
+            showMessage(`三出局，第 ${inning} 局下半，您開始攻擊！`, 'bg-orange-900 text-white border-orange-500');
+            setTimeout(startNewAtBat, 1500);
+        } else {
+            // User completes their turn
+            inning++;
+            isTopInning = true;
+            if (inning > 9) {
+                endGame();
+            } else {
+                // Simulate AI hitting first in the top of the new inning
+                setTimeout(simulateAIHalfInning, 1500);
+            }
+        }
+        updateUI();
+    }
+
+    /**
+     * Simulates the AI's entire half-inning of hitting.
+     */
+    function simulateAIHalfInning() {
+        showMessage(`第 ${inning} 局上半，電腦 (客隊) 攻擊中... (請稍候)`, 'bg-gray-700 text-white border-gray-500');
+
+        // Hide user controls
+        gameButtons.classList.add('hidden');
+        swingButton.disabled = true;
+        takeButton.disabled = true;
+
+        // Simple loop to simulate AI at-bats until 3 outs are recorded
+        outs = 0;
+        clearBases();
+        updateUI(); // Initial update before AI starts
+
+        const aiAtBat = () => {
+            if (outs < 3) {
+                const result = Math.random();
+                let eventMessage = '';
+                let aiHitType = 0;
+
+                // Add a brief 3D visual cue for AI turn (Pitching and then hitting)
+                ball.position.copy(pitcherMound.position);
+                ball.visible = true;
+
+                // Simple AI result calculation
+                if (result < 0.25) { // 25% chance of a walk/hit
+                    const hitTypeRand = Math.random();
+                    if (hitTypeRand < 0.1) {
+                        aiHitType = 4; // HR
+                        eventMessage = '電腦全壘打！';
+                    } else if (hitTypeRand < 0.25) {
+                        aiHitType = 2; // Double
+                        eventMessage = '電腦二壘安打！';
+                    } else if (hitTypeRand < 0.5) {
+                        aiHitType = 1; // Single
+                        eventMessage = '電腦一壘安打！';
+                    } else {
+                        aiHitType = 1; // Walk (use hitType 1 for base advance)
+                        eventMessage = '電腦四壞球保送！';
+                    }
+                } else if (result < 0.70) { // 45% chance of an out
+                    outs++;
+                    eventMessage = '電腦出局。';
+                } else { // 30% chance of a single out/strikeout (less dramatic result)
+                    outs++;
+                    eventMessage = '電腦三振出局。';
+                }
+                
+                // Process the result
+                if (aiHitType > 0) {
+                    advanceRunners(aiHitType);
+                    // Start hit animation for AI hits
+                     if (aiHitType !== 1 || Math.random() < 0.5) { // Animate some AI hits too
+                        startHitFlight(aiHitType);
+                    }
+                }
+                
+                showMessage(`AI行動: ${eventMessage}`, 'bg-gray-700 text-white border-gray-500');
+                updateUI();
+                
+                // Check if the game ended on a walk-off (unlikely but possible if AI hits HR at bottom 9)
+                if (inning > 9 && scoreHome > scoreAway) {
+                    endGame();
+                    return;
+                }
+
+                // Continue simulation after a short delay
+                setTimeout(aiAtBat, 1800);
+            } else {
+                // 3 Outs - end of AI half-inning
+                handleInningEnd();
+            }
+        };
+
+        // Start the simulation loop
+        setTimeout(aiAtBat, 1500);
+    }
+
+    /**
+     * Ends the game and displays the final score.
+     */
+    function endGame() {
+        let resultTitle = '比賽結束 - 最終結果';
+        let resultText = '';
+
+        if (scoreHome > scoreAway) {
+            resultTitle = '恭喜！您贏了！';
+            finalResultTitle.classList.remove('text-yellow-300');
+            finalResultTitle.classList.add('text-green-400');
+        } else if (scoreAway > scoreHome) {
+            resultTitle = '很遺憾，您輸了。';
+            finalResultTitle.classList.remove('text-yellow-300');
+            finalResultTitle.classList.add('text-red-400');
+        } else {
+             resultTitle = '比賽結束 - 平手！';
+        }
+
+        finalResultTitle.textContent = resultTitle;
+        resultText = `最終比分：客隊 (AI) ${scoreAway} - 主隊 (您) ${scoreHome}`;
+        finalScoreText.textContent = resultText;
+        finalModal.classList.remove('hidden');
+
+        // Disable all game buttons
+        swingButton.disabled = true;
+        takeButton.disabled = true;
+    }
+
+    // --- Event Listeners ---
+
+    startButton.addEventListener('click', () => {
+        // Reset state
+        inning = 1;
+        isTopInning = true;
+        scoreHome = 0;
+        scoreAway = 0;
+        outs = 0;
+        clearBases();
+
+        // Update UI
+        updateUI();
+
+        // Toggle buttons
+        startButton.classList.add('hidden');
+        gameButtons.classList.remove('hidden');
+        finalModal.classList.add('hidden');
+
+        // Start the game by simulating the AI's first half-inning
+        simulateAIHalfInning();
+    });
+
+    swingButton.addEventListener('click', () => {
+        // Only register the action if a pitch is in flight
+        if (isPitching) {
+            calculateResult(true);
+        } else if (inning > 9 && scoreHome !== scoreAway) {
+             // Do nothing if game has ended
+        } else {
+             showMessage('請等待投手投球！', 'bg-red-900 text-red-200 border-red-500');
+        }
+    });
+
+    takeButton.addEventListener('click', () => {
+        // Only register the action if a pitch is in flight
+        if (isPitching) {
+            calculateResult(false);
+        } else if (inning > 9 && scoreHome !== scoreAway) {
+             // Do nothing if game has ended
+        } else {
+             showMessage('請等待投手投球！', 'bg-red-900 text-red-200 border-red-500');
+        }
+    });
+
+    // --- Initialization ---
+    // Initialize 3D scene on window load
+    window.onload = function () {
+        init3D();
+        animate(); // Start the animation loop
+
+        // Start with a clean UI state
+        updateUI();
+        showMessage('點擊「開始遊戲」開始一場九局的比賽！');
+    };
+</script>
+
+</body>
+</html>
